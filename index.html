@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ANTI-GRAVITY | Global Space Logistics Hub</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.0.0/satellite.min.js"></script>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.108/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.108/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <style>
+        :root {
+            --accent: #00f2ff;
+            --accent2: #9d5cff;
+            --warn: #ffd740;
+            --bg: #05070a;
+            --panel: rgba(6, 10, 22, 0.93);
+            --border: rgba(0, 242, 255, 0.28);
+            --text-dim: #4a5a6a;
+            --text-mid: #8899aa;
+        }
+
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+        }
+
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            background: var(--bg);
+            color: #c8dce8;
+            font-family: 'Consolas', 'Courier New', monospace;
+            overflow: hidden;
+        }
+
+        #cesiumContainer {
+            width: 100%;
+            height: 100vh;
+        }
+
+        /* ── Overlay Panel ───────────────────────────── */
+        #overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 330px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-top: 2px solid var(--accent);
+            padding: 0;
+            pointer-events: auto;
+            backdrop-filter: blur(18px);
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        #overlay::-webkit-scrollbar {
+            width: 3px;
+        }
+
+        #overlay::-webkit-scrollbar-thumb {
+            background: var(--accent);
+            opacity: 0.3;
+        }
+
+        /* Section header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 16px 8px;
+            border-bottom: 1px solid rgba(0, 242, 255, 0.12);
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 3px;
+            color: var(--accent);
+        }
+
+        .header .badge {
+            font-size: 0.6rem;
+            letter-spacing: 1px;
+            padding: 2px 7px;
+            border: 1px solid currentColor;
+            border-radius: 2px;
+        }
+
+        .badge-live {
+            color: #00e676;
+        }
+
+        .badge-armed {
+            color: var(--warn);
+        }
+
+        /* Data rows */
+        .section-body {
+            padding: 8px 16px 12px;
+        }
+
+        .data-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            font-size: 0.82rem;
+        }
+
+        .label {
+            color: var(--text-dim);
+            text-transform: uppercase;
+            font-size: 0.67rem;
+            letter-spacing: 0.1em;
+        }
+
+        .value {
+            color: #ddeeff;
+        }
+
+        .value.accent {
+            color: var(--accent);
+        }
+
+        .value.warn {
+            color: var(--warn);
+        }
+
+        .value.dim {
+            color: var(--text-mid);
+            font-style: italic;
+        }
+
+        /* Telemetry big grid */
+        .telem-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 6px;
+            margin: 8px 0 4px;
+        }
+
+        .telem-cell {
+            background: rgba(0, 242, 255, 0.05);
+            border: 1px solid rgba(0, 242, 255, 0.1);
+            padding: 8px 4px 6px;
+            text-align: center;
+        }
+
+        .telem-val {
+            font-size: 1.05rem;
+            color: var(--accent);
+            line-height: 1;
+        }
+
+        .telem-lbl {
+            font-size: 0.58rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-top: 3px;
+        }
+
+        /* GS input row */
+        .input-row {
+            display: flex;
+            gap: 5px;
+            margin: 8px 0 4px;
+        }
+
+        input[type="number"] {
+            flex: 1;
+            background: rgba(0, 242, 255, 0.04);
+            border: 1px solid rgba(0, 242, 255, 0.18);
+            color: #c8dce8;
+            padding: 6px 8px;
+            font-family: 'Consolas', monospace;
+            font-size: 0.78rem;
+            outline: none;
+        }
+
+        input[type="number"]:focus {
+            border-color: var(--accent);
+        }
+
+        input[type="number"]::placeholder {
+            color: #2a3a4a;
+        }
+
+        input[type="number"]::-webkit-inner-spin-button {
+            display: none;
+        }
+
+        /* Buttons */
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 8px 12px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-mid);
+            font-family: 'Consolas', monospace;
+            font-size: 0.75rem;
+            letter-spacing: 0.15em;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: left;
+            margin-top: 5px;
+        }
+
+        .btn::before {
+            content: '> ';
+            color: var(--accent);
+        }
+
+        .btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(0, 242, 255, 0.06);
+        }
+
+        .btn:disabled {
+            opacity: 0.35;
+            cursor: wait;
+        }
+
+        .btn-primary {
+            border-color: rgba(0, 242, 255, 0.4);
+            color: #c8dce8;
+        }
+
+        .btn-primary:hover {
+            background: rgba(0, 242, 255, 0.1);
+        }
+
+        /* Pass table */
+        #pass-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.75rem;
+            margin-top: 6px;
+        }
+
+        /* Satellite Selector */
+        #sat-selector {
+            width: 100%;
+            background: rgba(0, 242, 255, 0.05);
+            border: 1px solid rgba(0, 242, 255, 0.25);
+            color: var(--accent);
+            padding: 8px 10px;
+            font-family: 'Consolas', monospace;
+            font-size: 0.78rem;
+            letter-spacing: 0.08em;
+            cursor: pointer;
+            outline: none;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2300f2ff'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+        }
+
+        #sat-selector:focus {
+            border-color: var(--accent);
+        }
+
+        #sat-selector option {
+            background: #06101a;
+            color: #c8dce8;
+        }
+
+        #pass-table th {
+            color: var(--accent);
+            text-align: left;
+            padding: 4px 6px;
+            border-bottom: 1px solid rgba(0, 242, 255, 0.18);
+            font-size: 0.62rem;
+            letter-spacing: 0.08em;
+        }
+
+        #pass-table td {
+            padding: 5px 6px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            color: var(--text-mid);
+        }
+
+        .q-high {
+            color: #00e676 !important;
+        }
+
+        .q-med {
+            color: var(--warn) !important;
+        }
+
+        .q-low {
+            color: #445a6a !important;
+        }
+
+        /* Footer bar */
+        .fp-bar {
+            padding: 7px 16px;
+            background: rgba(0, 242, 255, 0.03);
+            border-top: 1px solid rgba(0, 242, 255, 0.08);
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.7rem;
+            color: var(--text-dim);
+        }
+
+        .fp-bar span:last-child {
+            color: var(--text-mid);
+        }
+
+        /* ── Status chips (top right) ─────────────────── */
+        #status-bar {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            gap: 6px;
+            pointer-events: none;
+        }
+
+        .chip {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            padding: 5px 12px;
+            font-size: 0.65rem;
+            letter-spacing: 0.12em;
+            color: var(--accent);
+            backdrop-filter: blur(12px);
+        }
+
+        /* Cursor blink effect */
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: 0
+            }
+        }
+
+        .cursor {
+            animation: blink 1s step-end infinite;
+        }
+
+        .cesium-widget-credits,
+        .cesium-viewer-toolbar,
+        .cesium-viewer-bottom {
+            display: none !important;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="cesiumContainer"></div>
+
+    <!-- Status Chips -->
+    <div id="status-bar">
+        <div class="chip" id="chip-time">UTC --:--:--</div>
+        <div class="chip" id="chip-tle">TLE INIT</div>
+        <div class="chip" id="chip-gs">GS STANDBY</div>
+    </div>
+
+    <!-- Control Panel -->
+    <div id="overlay">
+
+        <!-- Header -->
+        <div class="header">
+            ◈ ANTI-GRAVITY CONTROL
+            <span class="badge badge-live">LIVE <span class="cursor">_</span></span>
+        </div>
+
+        <!-- Station Info -->
+        <div class="section-body">
+            <div class="data-row">
+                <span class="label">Ground Station</span>
+                <span class="value accent" id="gs-name">STANDBY</span>
+            </div>
+            <div class="data-row">
+                <span class="label">Target Asset</span>
+                <span class="value">ISS (ZARYA) #25544</span>
+            </div>
+            <div class="data-row">
+                <span class="label">UTC</span>
+                <span class="value" id="utc-time">--:--:-- Z</span>
+            </div>
+        </div>
+
+        <!-- Telemetry -->
+        <div class="header">TELEMETRY <span class="badge" style="color:var(--text-dim)">SGP4</span></div>
+        <div class="section-body">
+            <div class="telem-grid">
+                <div class="telem-cell">
+                    <div class="telem-val" id="lat">--°</div>
+                    <div class="telem-lbl">Latitude</div>
+                </div>
+                <div class="telem-cell">
+                    <div class="telem-val" id="lng">--°</div>
+                    <div class="telem-lbl">Longitude</div>
+                </div>
+                <div class="telem-cell">
+                    <div class="telem-val" id="alt">-- km</div>
+                    <div class="telem-lbl">Altitude</div>
+                </div>
+            </div>
+            <div class="data-row">
+                <span class="label">Velocity</span>
+                <span class="value accent" id="vel">-- km/s</span>
+            </div>
+            <div class="data-row">
+                <span class="label">Footprint R.</span>
+                <span class="value" id="footprint">-- km</span>
+            </div>
+            <div class="data-row">
+                <span class="label">Inclination</span>
+                <span class="value" id="inclination">--°</span>
+            </div>
+            <div class="data-row">
+                <span class="label">Territory</span>
+                <span id="location-name"
+                    style="color:var(--warn);font-size:0.78rem;text-align:right;max-width:190px;">SCANNING...</span>
+            </div>
+            <div class="data-row">
+                <span class="label">Signal Status</span>
+                <span id="signal-status" class="value">NOMINAL</span>
+            </div>
+        </div>
+
+        <!-- Mission Target (Satellite Selector) -->
+        <div class="header">MISSION TARGET <span class="badge" id="badge-sat" style="color:var(--accent)">ACTIVE</span>
+        </div>
+        <div class="section-body">
+            <select id="sat-selector" onchange="changeTarget(this.value)">
+                <option value="25544">ISS (ZARYA)</option>
+                <option value="48274">TIANGONG (CSS)</option>
+                <option value="20580">HUBBLE TELESCOPE</option>
+            </select>
+        </div>
+
+        <!-- Ground Station -->
+        <div class="header">GROUND STATION <span class="badge badge-armed">ARMED</span></div>
+        <div class="section-body">
+            <div class="input-row">
+                <input type="number" id="gsLat" placeholder="Latitude" step="0.0001">
+                <input type="number" id="gsLng" placeholder="Longitude" step="0.0001">
+            </div>
+            <button class="btn btn-primary" onclick="acquireGS()">GPS ACQUIRE</button>
+            <button class="btn btn-primary" onclick="calculateLogistics()" id="calcBtn">RUN PASS PREDICTION</button>
+        </div>
+
+        <!-- Pass Table -->
+        <div class="header">PASS SCHEDULE <span class="badge" style="color:var(--text-dim)" id="pass-count">--</span>
+        </div>
+        <div style="padding:0 0 4px">
+            <table id="pass-table">
+                <thead>
+                    <tr>
+                        <th>TIME (UTC)</th>
+                        <th>MAX ELEV</th>
+                        <th>DUR</th>
+                        <th>AZ</th>
+                    </tr>
+                </thead>
+                <tbody id="pass-body">
+                    <tr>
+                        <td colspan="4" style="text-align:center;color:#1a2a3a;padding:12px">
+                            SET GS → RUN PREDICTION
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Footer -->
+        <div class="fp-bar">
+            <span>FOOTPRINT</span>
+            <span id="footprint-area">-- M km²</span>
+        </div>
+
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
