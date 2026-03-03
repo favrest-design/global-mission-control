@@ -71,6 +71,11 @@ let firstFix = true;
         shouldAnimate: true,
     });
 
+    // ── Camera Constraints ───────────────────────────────────────
+    viewer.scene.screenSpaceCameraController.minimumZoomDistance = 100_000;    // 100 km min (no clipping into terrain)
+    viewer.scene.screenSpaceCameraController.maximumZoomDistance = 25_000_000; // 25 Mm max (no drifting into deep space)
+    viewer.scene.screenSpaceCameraController.enableTilt = true;                // Free tilt for cinematic control
+
     viewer.scene.globe.enableLighting = true;
     viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#050a14');
 
@@ -226,17 +231,20 @@ async function changeTarget(norad) {
     const meta = SATELLITES[norad] ?? { name: `NORAD ${norad}`, incl: '--' };
     MISSION_CONFIG.TARGET = { norad, name: meta.name };
 
-    // Update UI labels
-    const sel = SATELLITES[norad];
+    // UI badge
     const badge = document.getElementById('badge-sat');
     if (badge) { badge.textContent = 'SWITCHING...'; badge.style.color = 'var(--warn)'; }
 
-    // Reset trail + preview
+    // Clear territory
+    const locEl = document.getElementById('location-name');
+    if (locEl) { locEl.textContent = 'RE-ALIGNING TARGET...'; locEl.style.color = 'var(--warn)'; }
+
+    // Reset trail + orbit preview
     trailPositions = [];
+    viewer.trackedEntity = undefined;   // release camera lock before switching
     viewer.entities.values
         .filter(e => ['ORBIT_PREVIEW', ...Array.from({ length: 3 }, (_, i) => `LOOK_${i}`)].includes(e.id))
         .forEach(e => viewer.entities.remove(e));
-    firstFix = true;
 
     // Update Cesium label
     if (satelliteEntity) satelliteEntity.label.text = meta.name;
@@ -244,12 +252,23 @@ async function changeTarget(norad) {
     // Fetch new TLE
     await fetchLiveTLE(norad);
 
+    // UI updates after fetch
     if (badge) { badge.textContent = 'ACTIVE'; badge.style.color = 'var(--accent)'; }
     setText('inclination', `${meta.incl}°`);
-    // Clear territory on target switch
-    const locEl = document.getElementById('location-name');
-    if (locEl) { locEl.textContent = 'SCANNING...'; locEl.style.color = 'var(--warn)'; }
     lastGeoLat = null;
+
+    // Cinematic camera: fly to new target at -35° pitch (not straight down)
+    firstFix = false;  // prevent the auto-flyTo in tick()
+    viewer.flyTo(satelliteEntity, {
+        offset: new Cesium.HeadingPitchRange(
+            0,                              // Heading: north-aligned
+            Cesium.Math.toRadians(-35),     // Pitch: oblique (not -90° overhead)
+            8_000_000                       // Range: 8,000 km standoff
+        ),
+    }).then(function () {
+        // Lock camera to follow the satellite after flyTo completes
+        viewer.trackedEntity = satelliteEntity;
+    });
 }
 
 // ── ISS Position ───────────────────────────────────────────────
