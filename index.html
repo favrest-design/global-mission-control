@@ -244,16 +244,17 @@
             margin-top: 6px;
         }
 
-        /* Satellite Selector */
+        /* Satellite Catalog UI */
+        .cat-select,
         #sat-selector {
             width: 100%;
             background: rgba(0, 242, 255, 0.05);
             border: 1px solid rgba(0, 242, 255, 0.25);
             color: var(--accent);
-            padding: 8px 10px;
+            padding: 7px 10px;
             font-family: 'Consolas', monospace;
-            font-size: 0.78rem;
-            letter-spacing: 0.08em;
+            font-size: 0.75rem;
+            letter-spacing: 0.06em;
             cursor: pointer;
             outline: none;
             appearance: none;
@@ -262,14 +263,89 @@
             background-position: right 10px center;
         }
 
+        .cat-select:focus,
         #sat-selector:focus {
             border-color: var(--accent);
         }
 
+        .cat-select option,
         #sat-selector option {
             background: #06101a;
             color: #c8dce8;
         }
+
+        #sat-search {
+            width: 100%;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(0, 242, 255, 0.12);
+            border-top: none;
+            color: #c8dce8;
+            padding: 6px 10px;
+            font-family: 'Consolas', monospace;
+            font-size: 0.73rem;
+            outline: none;
+            box-sizing: border-box;
+        }
+
+        #sat-search::placeholder {
+            color: #1a2a3a;
+        }
+
+        #sat-search:focus {
+            border-color: rgba(0, 242, 255, 0.3);
+        }
+
+        #sat-list-wrap {
+            max-height: 155px;
+            overflow-y: auto;
+            border: 1px solid rgba(0, 242, 255, 0.1);
+            border-top: none;
+            margin-bottom: 4px;
+        }
+
+        #sat-list-wrap::-webkit-scrollbar {
+            width: 3px;
+        }
+
+        #sat-list-wrap::-webkit-scrollbar-thumb {
+            background: var(--accent);
+        }
+
+        #sat-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .sat-item {
+            padding: 4px 10px;
+            font-size: 0.7rem;
+            color: var(--text-mid);
+            cursor: pointer;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.024);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .sat-item:hover {
+            background: rgba(0, 242, 255, 0.07);
+            color: var(--accent);
+        }
+
+        .sat-item.active {
+            background: rgba(0, 242, 255, 0.13);
+            color: var(--accent);
+            border-left: 2px solid var(--accent);
+        }
+
+        #fleet-info {
+            font-size: 0.62rem;
+            color: var(--text-dim);
+            padding: 2px 0 4px;
+            text-align: right;
+        }
+
 
         #pass-table th {
             color: var(--accent);
@@ -434,15 +510,35 @@
             </div>
         </div>
 
-        <!-- Mission Target (Satellite Selector) -->
+        <!-- Mission Target (Satellite Catalog) -->
         <div class="header">MISSION TARGET <span class="badge" id="badge-sat" style="color:var(--accent)">ACTIVE</span>
         </div>
         <div class="section-body">
-            <select id="sat-selector" onchange="changeTarget(this.value)">
-                <option value="25544">ISS (ZARYA)</option>
-                <option value="48274">TIANGONG (CSS)</option>
-                <option value="20580">HUBBLE TELESCOPE</option>
+            <!-- Category selector -->
+            <select class="cat-select" id="cat-selector" onchange="loadCategory(this.value)">
+                <option value="stations">Space Stations</option>
+                <option value="weather">Weather Satellites</option>
+                <option value="gps-ops">GPS (USA)</option>
+                <option value="glo-ops">GLONASS (RU)</option>
+                <option value="galileo">Galileo (EU)</option>
+                <option value="beidou">BeiDou (CN)</option>
+                <option value="iridium-next">Iridium NEXT</option>
+                <option value="starlink">Starlink</option>
+                <option value="oneweb">OneWeb</option>
+                <option value="amateur">Amateur Radio</option>
+                <option value="science">Science</option>
+                <option value="tle-new">Recent Launches</option>
             </select>
+            <!-- Search -->
+            <input type="text" id="sat-search" placeholder="Search satellite name..."
+                oninput="filterSatList(this.value)">
+            <!-- Dynamic list -->
+            <div id="sat-list-wrap">
+                <ul id="sat-list">
+                    <li class="sat-item" style="color:#1a2a3a;pointer-events:none">Loading catalog...</li>
+                </ul>
+            </div>
+            <div id="fleet-info"></div>
         </div>
 
         <!-- Ground Station -->

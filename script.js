@@ -226,52 +226,220 @@ async function fetchLiveTLE(norad) {
 }
 
 // ── Change Target Satellite ────────────────────────────────────
-async function changeTarget(norad) {
-    norad = parseInt(norad, 10);
-    const meta = SATELLITES[norad] ?? { name: `NORAD ${norad}`, incl: '--' };
-    MISSION_CONFIG.TARGET = { norad, name: meta.name };
+// ── Satellite Catalog Engine ──────────────────────────────────────
+let currentCatalog = [];          // [{name, norad, line1, line2}]
+let fleetEntities = new Map();   // norad → Cesium point entity
+const FLEET_MAX = 500;
 
-    // UI badge
+/** Parse plain-text multi-entry TLE into structured array */
+function parseTLEText(text) {
+    const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
+    const sats = [];
+    for (let i = 0; i < lines.length - 2; i++) {
+        if (lines[i + 1].startsWith('1 ') && lines[i + 2].startsWith('2 ')) {
+            const norad = parseInt(lines[i + 1].slice(2, 7), 10);
+            sats.push({ name: lines[i], norad, line1: lines[i + 1], line2: lines[i + 2] });
+            i += 2;
+        }
+    }
+    return sats;
+}
+
+/** Fetch a CelesTrak group, populate catalog & render fleet */
+async function loadCategory(groupId) {
     const badge = document.getElementById('badge-sat');
-    if (badge) { badge.textContent = 'SWITCHING...'; badge.style.color = 'var(--warn)'; }
+    const fleetInfo = document.getElementById('fleet-info');
+    const ul = document.getElementById('sat-list');
 
-    // Clear territory
-    const locEl = document.getElementById('location-name');
-    if (locEl) { locEl.textContent = 'RE-ALIGNING TARGET...'; locEl.style.color = 'var(--warn)'; }
+    if (badge) { badge.textContent = 'LOADING...'; badge.style.color = 'var(--warn)'; }
+    if (ul) ul.innerHTML = '<li class="sat-item" style="color:#1a2a3a;pointer-events:none">Fetching catalog...</li>';
+    if (fleetInfo) fleetInfo.textContent = '';
 
-    // Reset trail + orbit preview
+    const targetUrl = `https://celestrak.org/NORAD/elements/gp.php?GROUP=${groupId}&FORMAT=tle`;
+
+    // Try multiple fetch strategies to handle CORS / network issues
+    const strategies = [
+        // 0. Local proxy (server.py) — most reliable, no CORS
+        () => fetch(`/proxy/celestrak?GROUP=${groupId}&FORMAT=tle`, { signal: AbortSignal.timeout(20000) }),
+        // 1. Direct (works if CelesTrak sends CORS headers)
+        () => fetch(targetUrl, { signal: AbortSignal.timeout(10000) }),
+        // 2. corsproxy.io
+        () => fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, { signal: AbortSignal.timeout(12000) }),
+        // 3. allorigins.win
+        () => fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`, { signal: AbortSignal.timeout(12000) }),
+    ];
+
+
+    let text = null;
+    for (const attempt of strategies) {
+        try {
+            const res = await attempt();
+            if (!res.ok) continue;
+            const body = await res.text();
+            // Validate it looks like TLE data (lines starting with '1 ' and '2 ')
+            if (body.includes('1 ') && body.includes('2 ')) { text = body; break; }
+        } catch { /* try next */ }
+    }
+
+    if (!text) {
+        if (ul) ul.innerHTML = '<li class="sat-item" style="color:#883300;pointer-events:none">CATALOG UNAVAILABLE — Network blocked</li>';
+        if (badge) { badge.textContent = 'OFFLINE'; badge.style.color = '#f84'; }
+        return;
+    }
+
+    currentCatalog = parseTLEText(text);
+    populateSatList(currentCatalog);
+    renderFleetDots(currentCatalog);
+
+    const total = currentCatalog.length;
+    const shown = Math.min(total, FLEET_MAX);
+    if (fleetInfo) {
+        fleetInfo.textContent = total > FLEET_MAX
+            ? `${total} satellites — fleet: ${shown} sampled`
+            : `${total} satellites loaded`;
+    }
+    if (badge) { badge.textContent = 'ACTIVE'; badge.style.color = 'var(--accent)'; }
+}
+
+
+/** Render scrollable satellite list */
+function populateSatList(catalog) {
+    const ul = document.getElementById('sat-list');
+    if (!ul) return;
+    if (!catalog.length) {
+        ul.innerHTML = '<li class="sat-item" style="color:#1a2a3a;pointer-events:none">No satellites</li>';
+        return;
+    }
+    ul.innerHTML = catalog.map((s, i) =>
+        `<li class="sat-item" data-idx="${i}" onclick="selectFromCatalog(${i})">${s.name}</li>`
+    ).join('');
+}
+
+/** Filter list by search query */
+function filterSatList(query) {
+    const ul = document.getElementById('sat-list');
+    if (!ul) return;
+    const q = query.trim().toLowerCase();
+    const filtered = q ? currentCatalog.filter(s => s.name.toLowerCase().includes(q)) : currentCatalog;
+    ul.innerHTML = filtered.map(s => {
+        const i = currentCatalog.indexOf(s);
+        return `<li class="sat-item" data-idx="${i}" onclick="selectFromCatalog(${i})">${s.name}</li>`;
+    }).join('');
+    if (!ul.innerHTML) ul.innerHTML = '<li class="sat-item" style="color:#1a2a3a;pointer-events:none">No match</li>';
+}
+
+/** Position helper accepting an explicit satrec (for fleet rendering) */
+function getPositionFromSatrec(sr, date) {
+    try {
+        const pv = satellite.propagate(sr, date);
+        if (!pv.position || typeof pv.position === 'boolean') return null;
+        const gmst = satellite.gstime(date);
+        const geo = satellite.eciToGeodetic(pv.position, gmst);
+        return {
+            lat: satellite.radiansToDegrees(geo.latitude),
+            lng: satellite.radiansToDegrees(geo.longitude),
+            altKm: geo.height,
+        };
+    } catch { return null; }
+}
+
+/** Remove all fleet dot entities */
+function clearFleetDots() {
+    fleetEntities.forEach(e => viewer.entities.remove(e));
+    fleetEntities.clear();
+}
+
+/** Render all satellites in catalog as tiny grey dots (max FLEET_MAX) */
+function renderFleetDots(catalog) {
+    clearFleetDots();
+    const t = now();
+    // Sample evenly if catalog is larger than FLEET_MAX
+    const step = catalog.length > FLEET_MAX ? Math.ceil(catalog.length / FLEET_MAX) : 1;
+    const sample = catalog.filter((_, i) => i % step === 0).slice(0, FLEET_MAX);
+
+    for (const sat of sample) {
+        try {
+            const sr = satellite.twoline2satrec(sat.line1, sat.line2);
+            const p = getPositionFromSatrec(sr, t);
+            if (!p) continue;
+            const entity = viewer.entities.add({
+                id: `FLEET_${sat.norad}`,
+                position: Cesium.Cartesian3.fromDegrees(p.lng, p.lat, p.altKm * 1000),
+                point: {
+                    pixelSize: 2,
+                    color: Cesium.Color.fromCssColorString('rgba(100,200,220,0.45)'),
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                },
+            });
+            fleetEntities.set(sat.norad, entity);
+        } catch { /* bad TLE — skip */ }
+    }
+}
+
+/** Switch primary tracking target to a catalog entry */
+function selectFromCatalog(idx) {
+    const sat = currentCatalog[idx];
+    if (!sat) return;
+
+    // Highlight in list
+    document.querySelectorAll('.sat-item').forEach(el => el.classList.remove('active'));
+    const el = document.querySelector(`.sat-item[data-idx="${idx}"]`);
+    if (el) { el.classList.add('active'); el.scrollIntoView({ block: 'nearest' }); }
+
+    // Load TLE directly from catalog (no extra API call needed)
+    MISSION_CONFIG.TARGET = { norad: sat.norad, name: sat.name };
+    satrec = satellite.twoline2satrec(sat.line1, sat.line2);
+    setChip('chip-tle', 'TLE CATALOG');
+
+    // Parse inclination from TLE line 2 (chars 8-16)
+    const incl = parseFloat(sat.line2.slice(8, 16));
+    if (!isNaN(incl)) setText('inclination', `${incl.toFixed(2)}°`);
+
+    // Update Cesium label
+    if (satelliteEntity) satelliteEntity.label.text = sat.name;
+
+    // Reset trail, release camera, clear look-lines
     trailPositions = [];
-    viewer.trackedEntity = undefined;   // release camera lock before switching
+    viewer.trackedEntity = undefined;
     viewer.entities.values
         .filter(e => ['ORBIT_PREVIEW', ...Array.from({ length: 3 }, (_, i) => `LOOK_${i}`)].includes(e.id))
         .forEach(e => viewer.entities.remove(e));
 
-    // Update Cesium label
-    if (satelliteEntity) satelliteEntity.label.text = meta.name;
-
-    // Fetch new TLE
-    await fetchLiveTLE(norad);
-
-    // UI updates after fetch
-    if (badge) { badge.textContent = 'ACTIVE'; badge.style.color = 'var(--accent)'; }
-    setText('inclination', `${meta.incl}°`);
+    // Clear territory
+    const locEl = document.getElementById('location-name');
+    if (locEl) { locEl.textContent = 'ACQUIRING...'; locEl.style.color = 'var(--warn)'; }
     lastGeoLat = null;
+    firstFix = false;
 
-    // Cinematic camera: fly to new target at -35° pitch (not straight down)
-    firstFix = false;  // prevent the auto-flyTo in tick()
+    // Cinematic flyTo → then lock camera
     viewer.flyTo(satelliteEntity, {
-        offset: new Cesium.HeadingPitchRange(
-            0,                              // Heading: north-aligned
-            Cesium.Math.toRadians(-35),     // Pitch: oblique (not -90° overhead)
-            8_000_000                       // Range: 8,000 km standoff
-        ),
-    }).then(function () {
-        // Lock camera to follow the satellite after flyTo completes
-        viewer.trackedEntity = satelliteEntity;
-    });
+        offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-35), 8_000_000),
+    }).then(() => { viewer.trackedEntity = satelliteEntity; });
+
+    console.log(`[CATALOG] Target: ${sat.name} (NORAD ${sat.norad})`);
 }
 
-// ── ISS Position ───────────────────────────────────────────────
+// ── changeTarget() — Legacy shim (still called by old HTML if any) ───────
+async function changeTarget(norad) {
+    norad = parseInt(norad, 10);
+    // Try to find in current catalog first (instant, no extra fetch)
+    const idx = currentCatalog.findIndex(s => s.norad === norad);
+    if (idx >= 0) { selectFromCatalog(idx); return; }
+    // Fallback: fetch individual TLE and inject into catalog temporarily
+    const meta = SATELLITES[norad] ?? { name: `NORAD ${norad}`, incl: '--' };
+    await fetchLiveTLE(norad);
+    MISSION_CONFIG.TARGET = { norad, name: meta.name };
+    if (satelliteEntity) satelliteEntity.label.text = meta.name;
+    setText('inclination', `${meta.incl}°`);
+    trailPositions = [];
+    viewer.trackedEntity = undefined;
+    firstFix = false;
+    viewer.flyTo(satelliteEntity, {
+        offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-35), 8_000_000),
+    }).then(() => { viewer.trackedEntity = satelliteEntity; });
+}
+
+// ── Satellite Position (primary tracker) ────────────────────────
 function getPosition(date) {
     if (!satrec) return null;
     try {
@@ -693,6 +861,13 @@ async function boot() {
     setInterval(tick, 1000);
     setInterval(fetchLiveTLE, 10 * 60 * 1000);
     setInterval(syncTime, 30 * 60 * 1000);
+
+    // Pre-load Space Stations catalog (ISS, Tiangong, etc.) on startup
+    await loadCategory('stations');
+    // Auto-select ISS
+    const issIdx = currentCatalog.findIndex(s => s.norad === 25544);
+    if (issIdx >= 0) selectFromCatalog(issIdx);
+
     console.log('%c◈ ALL SYSTEMS NOMINAL', 'color:#00e676;font-weight:bold');
 }
 
